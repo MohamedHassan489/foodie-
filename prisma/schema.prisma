@@ -8,16 +8,18 @@ datasource db {
 }
 
 model User {
-  id         String     @id @default(cuid())
-  email      String     @unique
-  password   String
-  name       String
-  diet       String     @default("none")
-  allergies  String     @default("")
-  skillLevel String     @default("beginner")
-  createdAt  DateTime   @default(now())
-  recipes    Recipe[]
-  mealPlans  MealPlan[]
+  id                String     @id @default(cuid())
+  email             String     @unique
+  password          String
+  name              String
+  diet              String     @default("none")
+  allergies         String     @default("")
+  skillLevel        String     @default("beginner")
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  createdAt         DateTime   @default(now())
+  recipes           Recipe[]
+  mealPlans         MealPlan[]
 }
 
 model Recipe {
@@ -31,6 +33,7 @@ model Recipe {
   steps       String
   nutrition   String   @default("{}")
   tip         String   @default("")
+  notes       String   @default("")
   rating      Float    @default(0)
   isFavorite  Boolean  @default(false)
   userId      String?

@@ -48,9 +48,11 @@ const routes = {
   '/scan':      pageScan,
   '/recipes':   pageRecipes,
   '/recipe':    pageRecipeDetail,
-  '/mealplan':  pageMealPlan,
-  '/profile':   pageProfile,
-  '/create':    pageCreateRecipe,
+  '/discover':  pageDiscover,
+  '/mealplan':        pageMealPlan,
+  '/profile':         pageProfile,
+  '/create':          pageCreateRecipe,
+  '/reset-password':  pageResetPassword,
 };
 
 function navigate(path) {
@@ -62,7 +64,8 @@ function router() {
   const path = hash.split('?')[0];
 
   // Guard: redirect to login if protected route and not authed
-  const protected_routes = ['/dashboard','/generate','/scan','/recipes','/recipe','/mealplan','/profile','/create'];
+  const protected_routes = ['/dashboard','/generate','/scan','/recipes','/recipe','/mealplan','/profile','/create','/discover'];
+  // reset-password is public even when logged in
   if (protected_routes.includes(path) && !State.user) {
     navigate('/login');
     return;
@@ -88,28 +91,55 @@ window.addEventListener('load', router);
 
 /* ── Nav ─────────────────────────────────────────────────── */
 function renderNav() {
-  const links  = document.getElementById('app-nav-links');
+  const links   = document.getElementById('app-nav-links');
   const actions = document.getElementById('nav-actions');
 
+  // Remove old mobile menu if any
+  document.getElementById('mobile-menu')?.remove();
+
+  const authLinks = State.user ? `
+    <a href="#/dashboard" data-route="/dashboard">Home</a>
+    <a href="#/discover"  data-route="/discover">Discover</a>
+    <a href="#/generate"  data-route="/generate">Generate</a>
+    <a href="#/scan"      data-route="/scan">Scan Fridge</a>
+    <a href="#/recipes"   data-route="/recipes">My Recipes</a>
+    <a href="#/mealplan"  data-route="/mealplan">Meal Plan</a>` : `
+    <a href="#/" data-route="/">Features</a>
+    <a href="#/" data-route="/">How it works</a>`;
+
+  links.innerHTML = authLinks;
+
   if (State.user) {
-    links.innerHTML = `
-      <a href="#/dashboard" data-route="/dashboard">Home</a>
-      <a href="#/generate"  data-route="/generate">Generate</a>
-      <a href="#/scan"      data-route="/scan">Scan Fridge</a>
-      <a href="#/recipes"   data-route="/recipes">My Recipes</a>
-      <a href="#/create"    data-route="/create">Add Recipe</a>
-      <a href="#/mealplan"  data-route="/mealplan">Meal Plan</a>`;
     actions.innerHTML = `
       <a href="#/profile" class="btn btn-ghost btn-sm">👤 ${State.user.name}</a>
-      <button class="btn btn-primary btn-sm" onclick="logout()">Sign out</button>`;
+      <button class="btn btn-primary btn-sm" onclick="logout()">Sign out</button>
+      <button class="hamburger" id="hamburger-btn" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>`;
   } else {
-    links.innerHTML = `
-      <a href="#/" data-route="/">Features</a>
-      <a href="#/" data-route="/">How it works</a>`;
     actions.innerHTML = `
       <a href="#/login"    class="btn btn-ghost btn-sm">Login</a>
-      <a href="#/register" class="btn btn-primary btn-sm">Get started</a>`;
+      <a href="#/register" class="btn btn-primary btn-sm">Get started</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>`;
   }
+
+  // Create mobile menu
+  const menu = document.createElement('div');
+  menu.id = 'mobile-menu';
+  menu.className = 'mobile-menu';
+  menu.innerHTML = authLinks + (State.user
+    ? `<a href="#/profile">👤 Profile</a><a onclick="logout()" style="cursor:pointer;color:var(--accent)">Sign out</a>`
+    : `<a href="#/login">Login</a><a href="#/register">Get started</a>`);
+  document.getElementById('main-nav').appendChild(menu);
+
+  document.getElementById('hamburger-btn')?.addEventListener('click', () => {
+    menu.classList.toggle('open');
+  });
+
+  // Close menu on link click
+  menu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => menu.classList.remove('open')));
 }
 
 function logout() {
@@ -325,7 +355,11 @@ function pageAuth() {
         <form id="auth-form">
           ${isRegister ? `<div class="form-group"><label>Your name</label><input class="form-control" id="f-name" placeholder="Mido" required /></div>` : ''}
           <div class="form-group"><label>Email</label><input class="form-control" id="f-email" type="email" placeholder="you@example.com" required /></div>
-          <div class="form-group"><label>Password</label><input class="form-control" id="f-pass" type="password" placeholder="Min 6 characters" required /></div>
+          <div class="form-group">
+            <label>Password</label>
+            <input class="form-control" id="f-pass" type="password" placeholder="Min 6 characters" required />
+            ${!isRegister ? `<span class="forgot-link" onclick="showForgotPassword()">Forgot password?</span>` : ''}
+          </div>
           <div id="auth-error" class="form-error" style="display:none"></div>
           <button class="btn btn-accent" type="submit" id="auth-btn">
             ${isRegister ? 'Create account →' : 'Sign in →'}
@@ -385,6 +419,79 @@ async function demoLogin() {
   }
 }
 
+window.showForgotPassword = () => {
+  openModal(`
+    <h3 style="margin-bottom:8px">Reset password</h3>
+    <p style="margin-bottom:20px;font-size:.9rem">Enter your email and we'll send a reset link.</p>
+    <div class="form-group" style="margin-bottom:16px">
+      <label>Email</label>
+      <input class="form-control" id="forgot-email" type="email" placeholder="you@example.com" />
+    </div>
+    <div id="forgot-msg" class="form-error" style="display:none"></div>
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <button class="btn btn-accent" onclick="submitForgot()">Send link</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+};
+
+window.submitForgot = async () => {
+  const email = document.getElementById('forgot-email')?.value.trim();
+  const msg   = document.getElementById('forgot-msg');
+  if (!email) { msg.textContent = 'Enter your email.'; msg.style.display = 'block'; return; }
+  try {
+    await API.auth.forgotPassword({ email });
+    msg.style.color = 'var(--accent-3)';
+    msg.textContent = 'Check your email (or console in dev mode) for the reset link.';
+    msg.style.display = 'block';
+  } catch (err) {
+    msg.textContent = err.message; msg.style.display = 'block';
+  }
+};
+
+function pageResetPassword() {
+  const token = new URLSearchParams(window.location.hash.split('?')[1]).get('token');
+
+  setHTML(`
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <h2>Set new password</h2>
+        <p class="sub">Choose a strong password for your account.</p>
+        <form id="reset-form">
+          <div class="form-group">
+            <label>New password</label>
+            <input class="form-control" id="r-pass" type="password" placeholder="Min 6 characters" required />
+          </div>
+          <div class="form-group" style="margin-top:14px">
+            <label>Confirm password</label>
+            <input class="form-control" id="r-pass2" type="password" placeholder="Repeat password" required />
+          </div>
+          <div id="reset-error" class="form-error" style="display:none"></div>
+          <button class="btn btn-accent" type="submit" style="width:100%;justify-content:center;margin-top:20px">Reset password →</button>
+        </form>
+        ${!token ? '<p class="form-error" style="margin-top:12px">Invalid or missing reset token.</p>' : ''}
+      </div>
+    </div>
+  `);
+
+  if (!token) return;
+
+  document.getElementById('reset-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pass  = document.getElementById('r-pass').value;
+    const pass2 = document.getElementById('r-pass2').value;
+    const err   = document.getElementById('reset-error');
+    if (pass !== pass2) { err.textContent = 'Passwords do not match.'; err.style.display = 'block'; return; }
+    try {
+      await API.auth.resetPassword({ token, password: pass });
+      toast('Password reset! Please log in.', 'success');
+      navigate('/login');
+    } catch (ex) {
+      err.textContent = ex.message; err.style.display = 'block';
+    }
+  });
+}
+
 /* ── Dashboard ───────────────────────────────────────────── */
 async function pageDashboard() {
   loading();
@@ -394,7 +501,7 @@ async function pageDashboard() {
     const profile = await API.users.profile();
     recipeCount   = profile.recipeCount || 0;
     const favs    = await API.recipes.list({ favorites: 'true' });
-    favCount      = favs.length;
+    favCount      = favs.total ?? favs.length ?? 0;
   } catch { /* non-fatal */ }
 
   setHTML(`
@@ -459,6 +566,40 @@ async function pageDashboard() {
       </div>
     </div>
   `);
+
+  if (!localStorage.getItem('foodie_onboarded')) showOnboarding();
+}
+
+const ONBOARD_STEPS = [
+  { icon: '🤖', title: 'Generate recipes with AI', body: 'Type in the ingredients you have on hand and let Foodie AI craft a personalised recipe just for you.' },
+  { icon: '📸', title: 'Scan your fridge', body: 'Upload a photo of your fridge or pantry and the AI will detect your ingredients automatically.' },
+  { icon: '📅', title: 'Plan your whole week', body: 'Generate a 7-day meal plan with a full shopping list — tailored to your diet and skill level.' },
+];
+
+function showOnboarding() {
+  let step = 0;
+  function render() {
+    const s = ONBOARD_STEPS[step];
+    const dots = ONBOARD_STEPS.map((_, i) => `<div class="onboard-dot ${i === step ? 'active' : ''}" onclick="window._onboardGo(${i})"></div>`).join('');
+    openModal(`
+      <div class="onboard-card">
+        <div class="onboard-icon">${s.icon}</div>
+        <h2>${s.title}</h2>
+        <p>${s.body}</p>
+        <div class="onboard-dots">${dots}</div>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:18px">
+          ${step > 0 ? `<button class="btn btn-ghost btn-sm" onclick="window._onboardGo(${step - 1})">← Back</button>` : ''}
+          ${step < ONBOARD_STEPS.length - 1
+            ? `<button class="btn btn-accent" onclick="window._onboardGo(${step + 1})">Next →</button>`
+            : `<button class="btn btn-accent" onclick="window._onboardDone()">Let's cook! 🍳</button>`}
+          <button class="btn btn-ghost btn-sm" onclick="window._onboardDone()">Skip</button>
+        </div>
+      </div>
+    `);
+  }
+  window._onboardGo = (i) => { step = i; render(); };
+  window._onboardDone = () => { localStorage.setItem('foodie_onboarded', '1'); closeModal(); };
+  render();
 }
 
 function greeting() {
@@ -833,14 +974,16 @@ async function pageRecipes() {
   `);
 
   try {
-    const recipes = await API.recipes.list();
-    renderRecipeList(recipes);
+    const data = await API.recipes.list({ limit: 20, page: 1 });
+    const recipes = data.recipes ?? data;
+    renderRecipeList(recipes, data.total ?? recipes.length, data.pages ?? 1);
   } catch (err) {
     setHTML(`<div class="container" style="padding:40px"><p class="form-error">${err.message}</p></div>`);
   }
 }
 
-function renderRecipeList(allRecipes) {
+function renderRecipeList(allRecipes, total = 0, totalPages = 1) {
+  const shown = allRecipes.length;
   setHTML(`
     <div class="container" style="padding:40px 24px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px">
@@ -872,7 +1015,7 @@ function renderRecipeList(allRecipes) {
             <option value="medium">Medium</option>
             <option value="hard">Hard</option>
           </select>
-          <span class="results-count" id="results-count">${allRecipes.length} recipes</span>
+          <span class="results-count" id="results-count">${shown} recipes</span>
         </div>` : ''}
 
       <div id="recipes-grid-container">
@@ -887,13 +1030,51 @@ function renderRecipeList(allRecipes) {
                ${allRecipes.map(r => recipeCardHTML(r)).join('')}
              </div>`}
       </div>
+
+      ${totalPages > 1 && shown < total ? `
+        <div class="load-more-wrap">
+          <button class="btn btn-ghost" id="load-more-btn" onclick="loadMoreRecipes()">Load more</button>
+          <span class="load-more-count">${shown} of ${total}</span>
+        </div>` : ''}
     </div>
   `);
 
-  // Store recipes on window for client-side filtering
   window._allRecipes = allRecipes;
+  window._recipePage  = 1;
+  window._recipeTotal = total;
+  window._recipePages = totalPages;
   attachCardListeners();
 }
+
+window.loadMoreRecipes = async () => {
+  const btn = document.getElementById('load-more-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    const nextPage = (window._recipePage || 1) + 1;
+    const data = await API.recipes.list({ limit: 20, page: nextPage });
+    const more = data.recipes ?? data;
+    window._allRecipes = [...(window._allRecipes || []), ...more];
+    window._recipePage = nextPage;
+    const grid = document.getElementById('recipes-grid');
+    if (grid) grid.innerHTML = window._allRecipes.map(r => recipeCardHTML(r)).join('');
+    attachCardListeners();
+    const shown = window._allRecipes.length;
+    const total = window._recipeTotal || shown;
+    const pages = window._recipePages || 1;
+    const wrap = document.querySelector('.load-more-wrap');
+    if (wrap) {
+      if (nextPage >= pages || shown >= total) {
+        wrap.remove();
+      } else {
+        const countEl = wrap.querySelector('.load-more-count');
+        if (countEl) countEl.textContent = `${shown} of ${total}`;
+        if (btn) { btn.disabled = false; btn.textContent = 'Load more'; }
+      }
+    }
+    const countEl = document.getElementById('results-count');
+    if (countEl) countEl.textContent = `${shown} recipes`;
+  } catch (err) { toast(err.message, 'error'); }
+};
 
 window.filterRecipes = () => {
   const query      = (document.getElementById('recipe-search')?.value || '').toLowerCase();
@@ -1012,12 +1193,38 @@ async function pageRecipeDetail() {
 
         ${r.tip ? `<div class="tip-box" style="margin-top:20px"><div class="tip-icon">👨‍🍳</div><p><strong>Chef's tip:</strong> ${r.tip}</p></div>` : ''}
 
+        <div class="notes-section" style="margin-top:32px">
+          <div class="section-title">My Notes</div>
+          <textarea id="recipe-notes" class="notes-area" placeholder="Add your personal notes here…">${r.notes || ''}</textarea>
+          <span class="notes-saved" id="notes-saved" style="display:none">Saved ✓</span>
+        </div>
+
+        <div class="section-title" style="margin-top:32px">Your Rating</div>
+        <div class="star-row" id="star-row">
+          ${[1,2,3,4,5].map(n => `<span class="star${n <= Math.round(r.rating) ? ' active' : ''}" data-val="${n}" onclick="window.rateRecipe('${r.id}',${n})">★</span>`).join('')}
+          <span style="font-size:.88rem;color:var(--ink-soft);margin-left:8px" id="rating-label">${r.rating > 0 ? r.rating.toFixed(1) + ' / 5' : 'Not rated'}</span>
+        </div>
+
         <div style="display:flex;gap:10px;margin-top:32px;flex-wrap:wrap">
           <button class="btn btn-ghost" onclick="toggleFav('${r.id}',this)">${r.isFavorite ? '❤️ Unfavourite' : '🤍 Favourite'}</button>
+          <button class="btn btn-ghost" onclick="window.print()">🖨 Print</button>
           <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${r.id}')">🗑 Delete</button>
         </div>
       </div>
     `);
+
+    // Notes auto-save on blur
+    const notesEl = document.getElementById('recipe-notes');
+    if (notesEl) {
+      notesEl.addEventListener('blur', async () => {
+        try {
+          await API.recipes.updateNotes(r.id, notesEl.value);
+          const saved = document.getElementById('notes-saved');
+          if (saved) { saved.style.display = 'inline'; setTimeout(() => saved.style.display = 'none', 2000); }
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    }
+
     // Wire scaler state for detail context
     _scalerState['detail'] = { orig: r.servings || 2, ingredients: r.ingredients || [] };
   } catch (err) {
@@ -1030,6 +1237,17 @@ window.toggleFav = async (id, btn) => {
     const updated = await API.recipes.toggleFavorite(id);
     btn.textContent = updated.isFavorite ? '❤️ Unfavourite' : '🤍 Favourite';
     toast(updated.isFavorite ? 'Added to favourites ❤️' : 'Removed', '');
+  } catch (err) { toast(err.message, 'error'); }
+};
+
+window.rateRecipe = async (id, val) => {
+  try {
+    const updated = await API.recipes.rate(id, val);
+    const stars = document.querySelectorAll('#star-row .star');
+    stars.forEach((s, i) => s.classList.toggle('active', i < val));
+    const label = document.getElementById('rating-label');
+    if (label) label.textContent = updated.rating.toFixed(1) + ' / 5';
+    toast('Rating saved!', 'success');
   } catch (err) { toast(err.message, 'error'); }
 };
 
@@ -1449,6 +1667,179 @@ function pageCreateRecipe() {
     }
   });
 }
+
+/* ── Discover page ───────────────────────────────────────── */
+async function pageDiscover() {
+  setHTML(`
+    <div class="container" style="padding:40px 24px">
+      <div class="back-link" onclick="navigate('/dashboard')">← Dashboard</div>
+      <h2 style="margin-top:4px;margin-bottom:6px">Discover Recipes</h2>
+      <p style="margin-bottom:24px">Search thousands of real recipes and save any to your collection.</p>
+
+      <div class="filter-bar" style="margin-bottom:28px">
+        <div class="search-wrap" style="flex:1;min-width:220px">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="discover-q" placeholder="Search by name (e.g. pasta, chicken)…"
+            onkeydown="if(event.key==='Enter')window.discoverSearch()" />
+        </div>
+        <select id="discover-cat" onchange="window.discoverSearch()">
+          <option value="">All categories</option>
+        </select>
+        <button class="btn btn-accent btn-sm" onclick="window.discoverSearch()">Search</button>
+      </div>
+
+      <div id="discover-grid" class="recipes-grid">
+        ${Array(8).fill(0).map(() => `
+          <div class="skeleton-card">
+            <div class="skeleton skeleton-thumb"></div>
+            <div class="skeleton-body">
+              <div class="skeleton skeleton-line medium"></div>
+              <div class="skeleton skeleton-line short"></div>
+              <div class="skeleton-chips">
+                <div class="skeleton skeleton-chip"></div>
+                <div class="skeleton skeleton-chip"></div>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+  `);
+
+  // Load categories into select
+  try {
+    const { categories } = await API.discover.categories();
+    const sel = document.getElementById('discover-cat');
+    if (sel) {
+      categories.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.name; o.textContent = c.name;
+        sel.appendChild(o);
+      });
+    }
+  } catch { /* non-fatal */ }
+
+  // Load initial results
+  window.discoverSearch();
+}
+
+window.discoverSearch = async () => {
+  const q   = (document.getElementById('discover-q')?.value || '').trim();
+  const cat = document.getElementById('discover-cat')?.value || '';
+  const grid = document.getElementById('discover-grid');
+  if (!grid) return;
+
+  grid.innerHTML = Array(8).fill(0).map(() => `
+    <div class="skeleton-card">
+      <div class="skeleton skeleton-thumb"></div>
+      <div class="skeleton-body">
+        <div class="skeleton skeleton-line medium"></div>
+        <div class="skeleton skeleton-line short"></div>
+      </div>
+    </div>`).join('');
+
+  try {
+    const params = {};
+    if (q)   params.q        = q;
+    if (cat) params.category = cat;
+    const { results } = await API.discover.search(params);
+
+    if (!results.length) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="icon">🔍</div><h3>No results</h3><p>Try a different search or category.</p></div>`;
+      return;
+    }
+
+    window._discoverResults = results;
+    grid.innerHTML = results.map((r, i) => discoverCardHTML(r, i)).join('');
+    grid.querySelectorAll('.discover-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => window.viewDiscoveredRecipe(parseInt(btn.dataset.idx)));
+    });
+    grid.querySelectorAll('.discover-save-btn').forEach(btn => {
+      btn.addEventListener('click', () => window.saveDiscoveredRecipe(btn.dataset.idx, results));
+    });
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="icon">⚠️</div><h3>Error</h3><p>${err.message}</p></div>`;
+  }
+};
+
+function discoverCardHTML(r, idx) {
+  const cuisineLabel = r.cuisine.charAt(0).toUpperCase() + r.cuisine.slice(1);
+  return `
+    <div class="recipe-card-item discover-card" style="position:relative">
+      ${r.thumb
+        ? `<img src="${r.thumb}/preview" class="recipe-thumb-img" alt="${r.title}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        : ''}
+      <div class="recipe-thumb-big" style="${r.thumb ? 'display:none' : ''}">${recipeEmoji(r.title)}</div>
+      <div class="recipe-card-body">
+        <h3>${r.title}</h3>
+        <p style="font-size:.88rem">${cuisineLabel}${r.category ? ' · ' + r.category : ''}</p>
+        <div class="recipe-card-meta">
+          <span class="chip">👥 ${r.servings}</span>
+          <span class="chip chip-green">${r.difficulty}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-ghost btn-sm discover-view-btn" data-idx="${idx}" style="flex:1">👁 View</button>
+          <button class="btn btn-accent btn-sm discover-save-btn" data-idx="${idx}" style="flex:1">+ Save</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+window.viewDiscoveredRecipe = (idx) => {
+  const r = (window._discoverResults || [])[idx];
+  if (!r) return;
+  const cuisineLabel = r.cuisine.charAt(0).toUpperCase() + r.cuisine.slice(1);
+  openModal(`
+    <div class="discover-detail-modal">
+      ${r.thumb ? `<img src="${r.thumb}" class="discover-modal-img" alt="${r.title}" onerror="this.style.display='none'">` : ''}
+      <div class="discover-modal-body">
+        <h2 style="margin-bottom:6px">${r.title}</h2>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px">
+          <span class="chip">${cuisineLabel}</span>
+          ${r.category ? `<span class="chip">${r.category}</span>` : ''}
+          <span class="chip">👥 ${r.servings} servings</span>
+          <span class="chip">⏱ ~${r.time} min</span>
+          <span class="chip chip-green">${r.difficulty}</span>
+        </div>
+
+        <div class="section-title">Ingredients</div>
+        <ul class="ing-list" style="margin-bottom:24px">
+          ${r.ingredients.map(i => `<li>${i}</li>`).join('')}
+        </ul>
+
+        <div class="section-title">How to Cook</div>
+        <ol class="discover-steps">
+          ${r.steps.map(s => `<li>${s}</li>`).join('')}
+        </ol>
+
+        <div style="display:flex;gap:10px;margin-top:24px">
+          <button class="btn btn-accent" onclick="window.saveDiscoveredRecipe(${idx}, window._discoverResults);closeModal()">+ Save to my recipes</button>
+          <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+};
+
+window.saveDiscoveredRecipe = async (idx, results) => {
+  const r = results[parseInt(idx)];
+  if (!r) return;
+  try {
+    await API.recipes.save({
+      title:       r.title,
+      cuisine:     r.cuisine,
+      difficulty:  r.difficulty,
+      time:        r.time,
+      servings:    r.servings,
+      ingredients: r.ingredients,
+      steps:       r.steps,
+      nutrition:   r.nutrition,
+      tip:         r.tip,
+    });
+    toast(`"${r.title}" saved to your recipes! 🎉`, 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+};
 
 /* ── Boot ────────────────────────────────────────────────── */
 renderNav();
