@@ -651,28 +651,61 @@ function pageScan() {
 }
 
 /* ── Recipe result renderer (shared) ────────────────────── */
+// ── Servings scaler helper ────────────────────────────────
+function scaleIngredient(ing, factor) {
+  // Only scale the leading number (quantity), not temps or times embedded mid-string
+  return ing.replace(/^([\d]+(?:\/[\d]+)?(?:\.\d+)?)\s*/, (match, num) => {
+    let val = num.includes('/') ? eval(num) : parseFloat(num); // eval only for "1/2" fractions
+    const scaled = val * factor;
+    const fmt = scaled === Math.floor(scaled) ? Math.floor(scaled) : parseFloat(scaled.toFixed(1));
+    return fmt + ' ';
+  });
+}
+
+function renderIngredientList(ingredients, servings, originalServings, recipeTitle) {
+  const factor = servings / originalServings;
+  return ingredients.map(i => {
+    const scaled = factor === 1 ? i : scaleIngredient(i, factor);
+    const safe   = i.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    const titleSafe = (recipeTitle || '').replace(/'/g, "\\'");
+    return `<li>
+      ${scaled}
+    </li>`;
+  }).join('');
+}
+
 function renderRecipeResult(r) {
+  const origServings = r.servings || 2;
+  const safeTitle = (r.title || '').replace(/'/g, "\\'");
+
   return `
-    <div class="recipe-result">
+    <div class="recipe-result" id="recipe-result-card">
       <div class="recipe-result-head">
         <h2>${recipeEmoji(r.title)} ${r.title}</h2>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
           <span class="chip">⏱ ${r.time} min</span>
-          <span class="chip">👥 ${r.servings} servings</span>
           <span class="chip">${r.cuisine}</span>
           <span class="chip ${difficultyColor(r.difficulty)}">${r.difficulty}</span>
+          <div style="display:flex;align-items:center;gap:8px;margin-left:4px">
+            <span style="font-size:.85rem;font-weight:600;color:var(--ink-soft)">Servings:</span>
+            <div class="servings-scaler">
+              <button class="scaler-btn" onclick="changeServings(-1,'result')">−</button>
+              <span class="scaler-val" id="result-servings-val">${origServings}</span>
+              <button class="scaler-btn" onclick="changeServings(1,'result')">+</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="recipe-result-body">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-bottom:24px">
           <div>
             <div class="section-title">Ingredients</div>
-            <ul class="ing-list">
+            <ul class="ing-list" id="result-ing-list">
               ${(r.ingredients || []).map(i => `<li>${i}</li>`).join('')}
             </ul>
           </div>
           <div>
-            <div class="section-title">Nutrition</div>
+            <div class="section-title">Nutrition <span style="font-size:.75rem;font-weight:400;color:var(--muted)">(per serving)</span></div>
             <div class="nutrition-grid" style="grid-template-columns:1fr 1fr">
               <div class="nut-item"><div class="val">${r.nutrition?.calories ?? '—'}</div><div class="key">Calories</div></div>
               <div class="nut-item"><div class="val">${r.nutrition?.protein ?? '—'}</div><div class="key">Protein</div></div>
@@ -688,7 +721,7 @@ function renderRecipeResult(r) {
             <div class="step-num">${i + 1}</div>
             <div>
               <div class="step-text">${s}</div>
-              <button class="step-tip-btn" onclick="loadTip(this,'${r.title.replace(/'/g,"\\'")}','${s.replace(/'/g,"\\'").replace(/"/g,'&quot;')}')">💡 Get AI tip</button>
+              <button class="step-tip-btn" onclick="loadTip(this,'${safeTitle}','${s.replace(/'/g,"\\'").replace(/"/g,'&quot;')}')">💡 Get AI tip</button>
               <div class="step-tip-box"></div>
             </div>
           </div>`).join('')}
@@ -703,7 +736,31 @@ function renderRecipeResult(r) {
     </div>`;
 }
 
+// Scaler state — keyed by context ('result' or 'detail')
+const _scalerState = {};
+
+window.changeServings = (delta, ctx) => {
+  const valEl = document.getElementById(`${ctx}-servings-val`);
+  const ingEl = document.getElementById(`${ctx}-ing-list`);
+  if (!valEl || !ingEl) return;
+
+  const current  = parseInt(valEl.textContent) || 2;
+  const next     = Math.max(1, current + delta);
+  if (next === current) return;
+
+  const orig     = _scalerState[ctx]?.orig || current;
+  const ings     = _scalerState[ctx]?.ingredients || [];
+  if (!_scalerState[ctx]) return;
+
+  valEl.textContent = next;
+  const factor = next / orig;
+  ingEl.innerHTML = ings.map(i => `<li>${factor === 1 ? i : scaleIngredient(i, factor)}</li>`).join('');
+};
+
 function attachRecipeActions(recipe) {
+  // Wire scaler state for result context
+  _scalerState['result'] = { orig: recipe.servings || 2, ingredients: recipe.ingredients || [] };
+
   const btn = document.getElementById('save-recipe-btn');
   if (!btn) return;
   btn.addEventListener('click', async () => {
@@ -745,39 +802,117 @@ window.shareRecipe = () => {
 
 /* ── My Recipes page ─────────────────────────────────────── */
 async function pageRecipes() {
-  loading();
+  // Show skeletons immediately while loading
+  setHTML(`
+    <div class="container" style="padding:40px 24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;flex-wrap:wrap;gap:12px">
+        <div>
+          <div class="back-link" onclick="navigate('/dashboard')">← Dashboard</div>
+          <h2 style="margin-top:4px">My Recipes</h2>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <a href="#/create"   class="btn btn-ghost btn-sm">📝 Add manually</a>
+          <a href="#/generate" class="btn btn-accent">🤖 Generate with AI</a>
+        </div>
+      </div>
+      <div class="recipes-grid">
+        ${Array(6).fill(0).map(() => `
+          <div class="skeleton-card">
+            <div class="skeleton skeleton-thumb"></div>
+            <div class="skeleton-body">
+              <div class="skeleton skeleton-line medium"></div>
+              <div class="skeleton skeleton-line short"></div>
+              <div class="skeleton-chips">
+                <div class="skeleton skeleton-chip"></div>
+                <div class="skeleton skeleton-chip"></div>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+  `);
+
   try {
     const recipes = await API.recipes.list();
-    setHTML(`
-      <div class="container" style="padding:40px 24px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;flex-wrap:wrap;gap:12px">
-          <div>
-            <div class="back-link" onclick="navigate('/dashboard')">← Dashboard</div>
-            <h2 style="margin-top:4px">My Recipes</h2>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <a href="#/create"   class="btn btn-ghost btn-sm">📝 Add manually</a>
-            <a href="#/generate" class="btn btn-accent">🤖 Generate with AI</a>
-          </div>
-        </div>
+    renderRecipeList(recipes);
+  } catch (err) {
+    setHTML(`<div class="container" style="padding:40px"><p class="form-error">${err.message}</p></div>`);
+  }
+}
 
-        ${recipes.length === 0
+function renderRecipeList(allRecipes) {
+  setHTML(`
+    <div class="container" style="padding:40px 24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+        <div>
+          <div class="back-link" onclick="navigate('/dashboard')">← Dashboard</div>
+          <h2 style="margin-top:4px">My Recipes</h2>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <a href="#/create"   class="btn btn-ghost btn-sm">📝 Add manually</a>
+          <a href="#/generate" class="btn btn-accent">🤖 Generate with AI</a>
+        </div>
+      </div>
+
+      ${allRecipes.length > 0 ? `
+        <div class="filter-bar">
+          <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="recipe-search" placeholder="Search recipes…" oninput="filterRecipes()" />
+          </div>
+          <select id="filter-cuisine" onchange="filterRecipes()">
+            <option value="">All cuisines</option>
+            ${[...new Set(allRecipes.map(r => r.cuisine))].map(c =>
+              `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`
+            ).join('')}
+          </select>
+          <select id="filter-difficulty" onchange="filterRecipes()">
+            <option value="">Any difficulty</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <span class="results-count" id="results-count">${allRecipes.length} recipes</span>
+        </div>` : ''}
+
+      <div id="recipes-grid-container">
+        ${allRecipes.length === 0
           ? `<div class="empty-state">
                <div class="icon">🍽️</div>
                <h3>No recipes yet</h3>
                <p>Generate your first recipe from your ingredients.</p>
                <a href="#/generate" class="btn btn-accent">Generate now</a>
              </div>`
-          : `<div class="recipes-grid">
-               ${recipes.map(r => recipeCardHTML(r)).join('')}
+          : `<div class="recipes-grid" id="recipes-grid">
+               ${allRecipes.map(r => recipeCardHTML(r)).join('')}
              </div>`}
       </div>
-    `);
-    attachCardListeners();
-  } catch (err) {
-    setHTML(`<div class="container" style="padding:40px"><p class="form-error">${err.message}</p></div>`);
-  }
+    </div>
+  `);
+
+  // Store recipes on window for client-side filtering
+  window._allRecipes = allRecipes;
+  attachCardListeners();
 }
+
+window.filterRecipes = () => {
+  const query      = (document.getElementById('recipe-search')?.value || '').toLowerCase();
+  const cuisine    = document.getElementById('filter-cuisine')?.value || '';
+  const difficulty = document.getElementById('filter-difficulty')?.value || '';
+
+  const filtered = (window._allRecipes || []).filter(r => {
+    const matchQuery    = !query    || r.title.toLowerCase().includes(query) || r.cuisine.toLowerCase().includes(query);
+    const matchCuisine  = !cuisine  || r.cuisine === cuisine;
+    const matchDiff     = !difficulty || r.difficulty === difficulty;
+    return matchQuery && matchCuisine && matchDiff;
+  });
+
+  const grid  = document.getElementById('recipes-grid');
+  const count = document.getElementById('results-count');
+  if (grid)  grid.innerHTML  = filtered.length ? filtered.map(r => recipeCardHTML(r)).join('') : `<div class="empty-state"><div class="icon">🔍</div><h3>No matches</h3><p>Try a different search or filter.</p></div>`;
+  if (count) count.textContent = `${filtered.length} recipe${filtered.length !== 1 ? 's' : ''}`;
+  attachCardListeners();
+};
 
 function recipeCardHTML(r) {
   return `
@@ -835,13 +970,21 @@ async function pageRecipeDetail() {
             <span class="chip">${r.cuisine}</span>
             <span class="chip ${difficultyColor(r.difficulty)}">${r.difficulty}</span>
             ${r.isFavorite ? '<span class="chip chip-accent">❤️ Favourite</span>' : ''}
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:.85rem;font-weight:600;color:var(--ink-soft)">Servings:</span>
+              <div class="servings-scaler">
+                <button class="scaler-btn" onclick="changeServings(-1,'detail')">−</button>
+                <span class="scaler-val" id="detail-servings-val">${r.servings}</span>
+                <button class="scaler-btn" onclick="changeServings(1,'detail')">+</button>
+              </div>
+            </div>
           </div>
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-bottom:32px">
           <div>
             <div class="section-title">Ingredients</div>
-            <ul class="ing-list">
+            <ul class="ing-list" id="detail-ing-list">
               ${r.ingredients.map(i => `<li>${i}</li>`).join('')}
             </ul>
           </div>
@@ -875,6 +1018,8 @@ async function pageRecipeDetail() {
         </div>
       </div>
     `);
+    // Wire scaler state for detail context
+    _scalerState['detail'] = { orig: r.servings || 2, ingredients: r.ingredients || [] };
   } catch (err) {
     setHTML(`<div class="container" style="padding:40px"><p class="form-error">${err.message}</p></div>`);
   }
@@ -977,7 +1122,17 @@ function renderPlan(plan) {
 
     ${plan.shoppingList?.length ? `
       <div style="margin-top:36px">
-        <h3 style="margin-bottom:14px">🛒 Shopping list</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+          <h3>🛒 Shopping list</h3>
+          <div class="export-row" style="margin:0">
+            <button class="btn btn-sm btn-whatsapp" onclick="exportToWhatsApp(${JSON.stringify(plan.shoppingList).replace(/"/g,'&quot;')})">
+              💬 Send to WhatsApp
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="copyShoppingList(${JSON.stringify(plan.shoppingList).replace(/"/g,'&quot;')})">
+              📋 Copy list
+            </button>
+          </div>
+        </div>
         <div class="shopping-list">
           ${plan.shoppingList.map(i => `<span class="chip">${i}</span>`).join('')}
         </div>
@@ -986,6 +1141,27 @@ function renderPlan(plan) {
     ${plan.totalCalories ? `<p style="margin-top:16px;color:var(--muted)">~${plan.totalCalories} total calories / week</p>` : ''}
   `;
 }
+
+window.exportToWhatsApp = (list) => {
+  const text = `🛒 *Foodie AI Shopping List*\n\n${list.map(i => `• ${i}`).join('\n')}`;
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+};
+
+window.copyShoppingList = async (list) => {
+  const text = list.map(i => `• ${i}`).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Shopping list copied! 📋', 'success');
+  } catch {
+    // Fallback for browsers that block clipboard without user gesture
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('Shopping list copied! 📋', 'success');
+  }
+};
 
 /* ── Profile page ────────────────────────────────────────── */
 async function pageProfile() {
